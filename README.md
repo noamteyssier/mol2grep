@@ -16,10 +16,10 @@ mol2grep --version
 ## Usage:
 ```bash
 # example run 
-mol2grep -i test0000.mol2.gz -q query_ids.tsv -o output.mol2.gz
+mol2grep -i data/test0000.mol2.gz -q data/query_ids.tsv -o output0000.mol2.gz
 
 # example run with multiple mol2 inputs
-mol2grep -i test*.mol2.gz -q query_ids.tsv -o output.mol2.gz
+mol2grep -i data/test*.mol2.gz -q data/query_ids.tsv -o output.mol2.gz
 
 # see options
 mol2grep --help
