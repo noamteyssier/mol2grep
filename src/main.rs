@@ -2,13 +2,15 @@
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+
+use io::Error;
 use regex::Regex;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter};
 use std::io;
 use std::fmt;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use clap::{Arg, App, ArgMatches};
@@ -79,7 +81,7 @@ impl Iterator for Mol2Reader {
     }
 }
 impl Mol2Reader {
-    pub fn new(filename: &str) -> Result<Self, io::Error> {
+    pub fn new(filename: &str) -> Result<Self, Error> {
         let file = File::open(filename)?;
         let gzr = MultiGzDecoder::new(file);
         let reader = BufReader::new(gzr);
@@ -182,45 +184,133 @@ impl Mol2Reader {
 }
 
 
-struct QueryReader {}
+enum QueryFormat {
+    WithScore(HashMap<Mol2, f64>),
+    WithoutScore(HashSet<Mol2>)
+}
+
+struct QueryReader {
+    bufreader: BufReader<File>,
+    line: String
+}
 impl QueryReader {
 
-    pub fn new(filename: &str) -> Result<HashMap<Mol2, f64>, io::Error> {
-        let file = File::open(filename)?;
-        let mut bufreader = BufReader::new(file);
-        let mut line = String::new();
+    fn insert_to_set(&self, table: &mut HashSet<Mol2>, mol: Mol2) {
+        table.insert(mol);
+    }
 
-        let mut mol_hash = HashMap::new();
+    fn insert_to_map(&self, table: &mut HashMap<Mol2, f64>, mol: Mol2) {
+        let energy = mol.energy;
+        table.insert(mol, energy);
+    }
 
+    fn mol_with_name(&self, name: &str) -> Mol2 {
+        let mut mol = Mol2::new();
+        mol.add_name(name.trim().to_owned());
+        mol
+    }
+
+    fn mol_with_name_and_energy(&self, name: &str, energy: &str) -> Mol2 {
+        let mut mol = Mol2::new();
+        mol.add_name(name.to_owned());
+        mol.add_energy(
+            energy.parse::<f64>()
+            .expect("\n\nError: Malformed Energy Column...\n...Unable to be parsed into float\n\n"));
+        mol
+    }
+
+    fn split_items(&self) -> Vec<&str> {
+        self.line.trim()
+            .split_whitespace()
+            .collect()
+    }
+
+    fn read_zinc_list(&mut self) -> HashSet<Mol2> {
+        let mut table = HashSet::new();
+
+        let mol = self.mol_with_name(&self.line);
+        self.insert_to_set(&mut table, mol);
         loop {
+            if self.step().unwrap() == 0 {break;}
 
-            line.clear();
-            let eof = bufreader.read_line(&mut line).unwrap();
-            if eof == 0 {
-                break;
-            }
-
-            let mut mol = Mol2::new();
-
-            let mut iter = 0;
-            for element in line.trim().split_whitespace() {
-                if iter == 0 {
-                    mol.add_name(element.to_string());
-                }
-                else {
-                    mol.add_energy(element.parse::<f64>().unwrap())
-                }
-                iter += 1;
-            }
-
-            mol_hash.insert(mol.clone(), mol.energy);
-
+            let mol = self.mol_with_name(&self.line);
+            self.insert_to_set(&mut table, mol);
         }
 
-        Ok(mol_hash)
+        table
+    }
+
+    fn read_zinc_score_table(&mut self) -> HashMap<Mol2, f64> {
+        let mut table = HashMap::new();
+
+        let items = self.split_items();
+
+        let mol = self.mol_with_name_and_energy(items[0], items[1]);
+        self.insert_to_map(&mut table, mol);
+
+        loop {
+            if self.step().unwrap() == 0 {break;}
+
+            let items = self.split_items();
+            let mol = self.mol_with_name_and_energy(items[0], items[1]);
+            self.insert_to_map(&mut table, mol);
+        }
+
+        table
+    }
+
+    fn step(&mut self) -> Result<usize, Error> {
+        /*
+        Steps through the file one line at a time and returns false if EOF is found
+        */
+        self.line.clear();
+        let eof = self.bufreader.read_line(&mut self.line)?;
+        Ok(eof)
+    }
+
+    fn load_queries(&mut self) -> Result<QueryFormat, Error> {
+        self.step()?;
+
+        let items = self.split_items();
+
+        match items.len() {
+            1 => Ok(QueryFormat::WithoutScore(self.read_zinc_list())),
+            2 => Ok(QueryFormat::WithScore(self.read_zinc_score_table())),
+            _ => panic!("\n\nError: Malformed Query Input...\n..Found >2 columns but expecting 2\n\n")
+        }
+    }
+
+    pub fn new(filename: &str) -> Result<Self, Error> {
+        let file = File::open(filename)?;
+
+        Ok(
+            QueryReader {
+                bufreader: BufReader::new(file),
+                line: String::new()
+            }
+        )
     }
 }
 
+
+fn grep_with_set(mol2_reader: Mol2Reader, table: &HashSet<Mol2>, writer_file: &mut Box<dyn Write>) {
+
+    mol2_reader
+        .into_iter()
+        .filter(|x| table.contains(x))
+        .for_each(|x| writer_file.write_all(x.lines.as_bytes()).unwrap())
+
+}
+
+fn grep_with_map(mol2_reader: Mol2Reader, table: &HashMap<Mol2, f64>, tol: f64, writer_file: &mut Box<dyn Write>) {
+
+    mol2_reader
+        .into_iter()
+        .filter(|x| table.contains_key(x))
+        .filter(|x| (x.energy - table.get(x).unwrap() <= tol))
+        .for_each(|x| writer_file.write_all(x.lines.as_bytes()).unwrap())
+
+}
 
 pub fn writer(filename: &str) -> Box<dyn Write> {
     let path = Path::new(filename);
@@ -281,7 +371,7 @@ fn get_args() -> ArgMatches<'static> {
 }
 
 
-fn main() {
+fn main() -> Result<(), Error> {
 
     let matches = get_args();
 
@@ -294,20 +384,27 @@ fn main() {
         .parse::<f64>()
         .unwrap();
 
-    let mol_hash = QueryReader::new(query_filename).unwrap();
+
+    let mut qr = QueryReader::new(query_filename)?;
+    let table = qr.load_queries()?;
+
     let mut writer_file = writer(output_filename);
 
     for filename in input_files {
+        let mol2_reader = Mol2Reader::new(filename)?;
 
-        let mol2_reader = Mol2Reader::new(filename).unwrap();
-        mol2_reader
-            .into_iter()
-            .filter(|x| mol_hash.contains_key(x))
-            .filter(|x| (x.energy - mol_hash.get(x).unwrap() <= tol))
-            .for_each(
-                    |x| writer_file.write_all(x.lines.as_bytes()).unwrap()
-                );
+        match table {
+
+            QueryFormat::WithoutScore(ref t) => {
+                grep_with_set(mol2_reader, &t, &mut writer_file)
+            },
+
+            QueryFormat::WithScore(ref t) => {
+                grep_with_map(mol2_reader, &t, tol, &mut writer_file)
+            }
+        }
 
     }
 
+    Ok(())
 }
