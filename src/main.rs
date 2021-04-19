@@ -422,7 +422,7 @@ fn get_args() -> ArgMatches<'static> {
             )
         .arg(
             Arg::with_name("tolerance")
-                .short("t")
+                .short("e")
                 .long("tol")
                 .help("Minimum tolerance to accept in float comparisons (default = 1e-6)")
                 .takes_value(true)
@@ -457,6 +457,15 @@ fn get_args() -> ArgMatches<'static> {
                 .takes_value(true)
                 .required(false)
             )
+            .arg(
+                Arg::with_name("num_threads")
+                    .short("t")
+                    .long("threads")
+                    .help("Number of threads to use in parallel processing")
+                    .takes_value(true)
+                    .required(false)
+                    .default_value("4")
+                )
         .get_matches();
 
     matches
@@ -474,7 +483,23 @@ fn main() -> Result<(), Error> {
     let tol = matches.value_of("tolerance")
         .unwrap()
         .parse::<f64>()
-        .unwrap();
+        .expect("Malformed input: tolerance");
+
+    let num_threads = matches.value_of("num_threads")
+        .unwrap()
+        .parse::<usize>()
+        .expect("Malformed input: num_threads");
+
+    // Instantiate number of threads for rayon parallel processing
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .expect(
+            &format!(
+                "Error: error building thread pool with <{}> threads",
+                num_threads
+            )
+        );
 
 
     // Instantiate QueryReader and read file into table
