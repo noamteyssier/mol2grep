@@ -1,0 +1,6 @@
+data/test0000.mol2.gz
+data/test0001.mol2.gz
+data/test0002.mol2.gz
+data/test0003.mol2.gz
+data/test0004.mol2.gz
+data/test0005.mol2.gz

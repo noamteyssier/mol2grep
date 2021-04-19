@@ -14,6 +14,11 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use clap::{Arg, App, ArgMatches};
+use rayon::prelude::*;
+
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
+use std::thread;
 
 
 // Struct representing molecular data from a mol2 formatted file
@@ -332,12 +337,22 @@ impl QueryReader {
 fn grep_with_set(
         mol2_reader: Mol2Reader,
         table: &HashSet<Mol2>,
-        writer_file: &mut Box<dyn Write>) {
+        channel: &mut Sender<Mol2>) {
+
+    // mol2_reader
+    //     .into_iter()
+    //     .filter(|x| table.contains(x))
+    //     .for_each(|x| writer_file.write_all(x.lines.as_bytes()).unwrap())
+
 
     mol2_reader
         .into_iter()
-        .filter(|x| table.contains(x))
-        .for_each(|x| writer_file.write_all(x.lines.as_bytes()).unwrap())
+        .filter(|x|
+            table.contains(x)
+        )
+        .for_each(|x|
+            channel.send(x).expect("Error: Broken Send Channel")
+        );
 
 }
 
@@ -346,13 +361,19 @@ fn grep_with_map(
         mol2_reader: Mol2Reader,
         table: &HashMap<Mol2, f64>,
         tol: f64,
-        writer_file: &mut Box<dyn Write>) {
+        channel: &mut Sender<Mol2>) {
 
     mol2_reader
         .into_iter()
-        .filter(|x| table.contains_key(x))
-        .filter(|x| (x.energy - table.get(x).unwrap() <= tol))
-        .for_each(|x| writer_file.write_all(x.lines.as_bytes()).unwrap())
+        .filter(|x|
+            table.contains_key(x)
+        )
+        .filter(|x|
+            (x.energy - table.get(x).unwrap() <= tol)
+        )
+        .for_each(|x|
+            channel.send(x).expect("Error: Broken Send Channel")
+        );
 
 }
 
@@ -401,7 +422,7 @@ fn get_args() -> ArgMatches<'static> {
             )
         .arg(
             Arg::with_name("tolerance")
-                .short("t")
+                .short("e")
                 .long("tol")
                 .help("Minimum tolerance to accept in float comparisons (default = 1e-6)")
                 .takes_value(true)
@@ -436,6 +457,15 @@ fn get_args() -> ArgMatches<'static> {
                 .takes_value(true)
                 .required(false)
             )
+            .arg(
+                Arg::with_name("num_threads")
+                    .short("t")
+                    .long("threads")
+                    .help("Number of threads to use in parallel processing")
+                    .takes_value(true)
+                    .required(false)
+                    .default_value("4")
+                )
         .get_matches();
 
     matches
@@ -448,13 +478,31 @@ fn main() -> Result<(), Error> {
     let matches = get_args();
 
     // Assign Variables
+    let input_mol2s = matches.values_of("mol2");
+    let input_filelist = matches.value_of("input_files");
+
     let query_filename = matches.value_of("query").unwrap();
     let output_filename = matches.value_of("output").unwrap();
-    let tol = matches
-        .value_of("tolerance")
+    let tol = matches.value_of("tolerance")
         .unwrap()
         .parse::<f64>()
-        .unwrap();
+        .expect("Malformed input: tolerance");
+
+    let num_threads = matches.value_of("num_threads")
+        .unwrap()
+        .parse::<usize>()
+        .expect("Malformed input: num_threads");
+
+    // Instantiate number of threads for rayon parallel processing
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .expect(
+            &format!(
+                "Error: error building thread pool with <{}> threads",
+                num_threads
+            )
+        );
 
 
     // Instantiate QueryReader and read file into table
@@ -464,9 +512,7 @@ fn main() -> Result<(), Error> {
     // Instantiate Writer
     let mut writer_file = writer(output_filename);
 
-    let input_mol2s = matches.values_of("mol2");
-    let input_filelist = matches.value_of("input_files");
-
+    // Instantiate Input File List
     let input_files: Vec<String>;
     match input_mol2s {
 
@@ -484,25 +530,47 @@ fn main() -> Result<(), Error> {
 
     };
 
-    // Iterate through vector of input files
-    for filename in input_files {
+    // Instantiate Send/Receive Channels
+    let (channel_send, channel_recv): (Sender<Mol2>, Receiver<Mol2>) = mpsc::channel();
 
-        // Instantiate Mol2Reader for a given file
-        let mol2_reader = Mol2Reader::new(&filename)?;
+    // places molecules into writer channel
+    thread::spawn(move || {
 
-        // Grep File with Query Table
-        match table {
+        // iterate through input files in parallel
+        input_files
+            .par_iter()
+            .for_each_with(channel_send, |sender, x| {
 
-            QueryFormat::WithoutScore(ref t) => {
-                grep_with_set(mol2_reader, &t, &mut writer_file)
-            },
+                // instantiate a new mol2 reader
+                let mol2_reader = Mol2Reader::new(&x).unwrap();
 
-            QueryFormat::WithScore(ref t) => {
-                grep_with_map(mol2_reader, &t, tol, &mut writer_file)
-            }
-        }
+                // depending on the query input format
+                match table {
 
-    }
+                    // filter molecules without considering query score
+                    QueryFormat::WithoutScore(ref t) => {
+                        grep_with_set(mol2_reader, &t, sender)
+                    },
+
+                    // filter molecules considering query score
+                    QueryFormat::WithScore(ref t) => {
+                        grep_with_map(mol2_reader, &t, tol, sender)
+                    }
+                };
+
+            });
+    });
+
+    // writes passing molecules to file
+    for mol in channel_recv {
+        writer_file
+            .write_all(
+                mol.lines.as_bytes()
+            )
+            .expect(
+                "Error: Error writing to output file"
+            )
+    };
 
     Ok(())
 }
