@@ -32,7 +32,7 @@ impl fmt::Debug for Mol2 {
          .field("\n  energy", &self.energy)
          .finish()
     }
-    
+
 }
 impl Hash for Mol2 {
 
