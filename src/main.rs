@@ -327,19 +327,6 @@ impl QueryReader {
     }
 }
 
-fn read_input_list(filename: &str) -> Result<Vec<String>, io::Error>{
-
-    let mut file = File::open(filename)?;
-    let mut list = String::new();
-    file.read_to_string(&mut list)?;
-
-    let content: Vec<String> = list
-        .split_whitespace()
-        .map(|x| x.to_string())
-        .collect();
-
-    Ok(content)
-}
 
 // Function to perform grep without checking for score matches
 fn grep_with_set(
@@ -423,16 +410,6 @@ fn get_args() -> ArgMatches<'static> {
                 .takes_value(true)
                 .required(true)
                 .min_values(1)
-                .required_unless_one(&["input_files"])
-        )
-        .arg(
-            Arg::with_name("input_files")
-            .short("f")
-            .long("files")
-            .value_name("<files>.txt")
-            .help("a list of filenames to process")
-            .takes_value(true)
-            .required(false)
         )
         .get_matches();
 
@@ -448,40 +425,22 @@ fn main() -> Result<(), Error> {
     // Assign Variables
     let query_filename = matches.value_of("query").unwrap();
     let output_filename = matches.value_of("output").unwrap();
+    let input_files = matches.values_of("mol2").unwrap();
     let tol = matches
         .value_of("tolerance")
         .unwrap()
         .parse::<f64>()
         .unwrap();
 
-    let input_mol2s = matches.values_of("mol2");
-    let input_filelist = matches.value_of("input_files");
-
 
     // Instantiate QueryReader and read file into table
     let mut qr = QueryReader::new(query_filename)?;
     let table = qr.load_queries()?;
 
+    // Instantiate Writer
     let mut writer_file = writer(output_filename);
 
-
-    let input_files: Vec<String>;
-    match input_mol2s {
-
-        // case where one or multiple mol2 are given at CLI
-        Some(f) => {
-            input_files = f.into_iter()
-                .map(|x| x.to_string())
-                .collect()
-        },
-
-        // case where a single input file containing mol2 paths is given at CLI
-        None => {
-            input_files = read_input_list(input_filelist.unwrap()).unwrap()
-        }
-
-    };
-
+    // Iterate through vector of input files
     for filename in input_files {
 
         // Instantiate Mol2Reader for a given file
