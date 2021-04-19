@@ -356,6 +356,7 @@ fn grep_with_set(
 
 }
 
+
 // Function to perform grep while checking for score matches
 fn grep_with_map(
         mol2_reader: Mol2Reader,
@@ -376,6 +377,7 @@ fn grep_with_map(
         );
 
 }
+
 
 // Public writer function to write to gzip
 pub fn writer(filename: &str) -> Box<dyn Write> {
@@ -404,6 +406,7 @@ fn read_input_list(filename: &str) -> Result<Vec<String>, io::Error>{
 
     Ok(content)
 }
+
 
 // Receives arguments from CLI
 fn get_args() -> ArgMatches<'static> {
