@@ -15,7 +15,9 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use clap::{Arg, App, ArgMatches};
 use rayon::prelude::*;
+use indicatif::ProgressIterator;
 
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
@@ -337,22 +339,26 @@ impl QueryReader {
 fn grep_with_set(
         mol2_reader: Mol2Reader,
         table: &HashSet<Mol2>,
-        channel: &mut Sender<Mol2>) {
+        channel: &mut Sender<Mol2>) -> (u32, u32) {
 
-    // mol2_reader
-    //     .into_iter()
-    //     .filter(|x| table.contains(x))
-    //     .for_each(|x| writer_file.write_all(x.lines.as_bytes()).unwrap())
-
+    let mut num_molecules = 0;
+    let mut num_passing = 0;
 
     mol2_reader
         .into_iter()
+        .map(|x|{
+            num_molecules += 1;
+            x
+        })
         .filter(|x|
             table.contains(x)
         )
-        .for_each(|x|
-            channel.send(x).expect("Error: Broken Send Channel")
-        );
+        .for_each(|x|{
+            num_passing += 1;
+            channel.send(x).expect("Error: Broken Send Channel");
+        });
+
+    (num_molecules, num_passing)
 
 }
 
@@ -362,19 +368,29 @@ fn grep_with_map(
         mol2_reader: Mol2Reader,
         table: &HashMap<Mol2, f64>,
         tol: f64,
-        channel: &mut Sender<Mol2>) {
+        channel: &mut Sender<Mol2>) -> (u32, u32) {
+
+    let mut num_molecules = 0;
+    let mut num_passing = 0;
 
     mol2_reader
         .into_iter()
+        .map(|x|{
+            num_molecules += 1;
+            x
+        })
         .filter(|x|
             table.contains_key(x)
         )
         .filter(|x|
             (x.energy - table.get(x).unwrap() <= tol)
         )
-        .for_each(|x|
-            channel.send(x).expect("Error: Broken Send Channel")
-        );
+        .for_each(|x|{
+            num_passing += 1;
+            channel.send(x).expect("Error: Broken Send Channel");
+        });
+
+    (num_molecules, num_passing)
 
 }
 
@@ -536,19 +552,27 @@ fn main() -> Result<(), Error> {
     // Instantiate Send/Receive Channels
     let (channel_send, channel_recv): (Sender<Mol2>, Receiver<Mol2>) = mpsc::channel();
 
+    let num_molecules = Arc::new(Mutex::new(0));
+    let num_passing = Arc::new(Mutex::new(0));
+
+    let num_molecules_fmt = num_molecules.clone();
+    let num_passing_fmt = num_passing.clone();
+
     // places molecules into writer channel
     thread::spawn(move || {
 
         // iterate through input files in parallel
         input_files
-            .par_iter()
+            .into_iter()
+            .progress()  // adds a progress bar on the file processing
+            .par_bridge()
             .for_each_with(channel_send, |sender, x| {
 
                 // instantiate a new mol2 reader
                 let mol2_reader = Mol2Reader::new(&x).unwrap();
 
                 // depending on the query input format
-                match table {
+                let (nm, np) = match table {
 
                     // filter molecules without considering query score
                     QueryFormat::WithoutScore(ref t) => {
@@ -560,6 +584,9 @@ fn main() -> Result<(), Error> {
                         grep_with_map(mol2_reader, &t, tol, sender)
                     }
                 };
+
+                *num_molecules.lock().unwrap() += nm;
+                *num_passing.lock().unwrap() += np;
 
             });
     });
@@ -574,6 +601,16 @@ fn main() -> Result<(), Error> {
                 "Error: Error writing to output file"
             )
     };
+
+    println!(
+        ">>> Number of Molecules Processed: {}",
+        num_molecules_fmt.lock().unwrap()
+    );
+
+    println!(
+        ">>> Number of Molecules Accepted: {}",
+        num_passing_fmt.lock().unwrap()
+    );
 
     Ok(())
 }
