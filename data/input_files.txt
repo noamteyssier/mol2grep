@@ -1,0 +1,3 @@
+data/test0000.mol2.gz
+data/test0001.mol2.gz
+data/test0002.mol2.gz
