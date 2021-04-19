@@ -32,7 +32,7 @@ impl fmt::Debug for Mol2 {
          .field("\n  energy", &self.energy)
          .finish()
     }
-    
+
 }
 impl Hash for Mol2 {
 
@@ -457,7 +457,11 @@ fn main() -> Result<(), Error> {
     let input_mol2s = matches.values_of("mol2");
     let input_filelist = matches.value_of("input_files");
 
-    let mol_hash = QueryReader::new(query_filename).unwrap();
+
+    // Instantiate QueryReader and read file into table
+    let mut qr = QueryReader::new(query_filename)?;
+    let table = qr.load_queries()?;
+
     let mut writer_file = writer(output_filename);
 
 
@@ -475,19 +479,26 @@ fn main() -> Result<(), Error> {
         None => {
             input_files = read_input_list(input_filelist.unwrap()).unwrap()
         }
-        
+
     };
 
     for filename in input_files {
 
-        let mol2_reader = Mol2Reader::new(&filename).unwrap();
-        mol2_reader
-            .into_iter()
-            .filter(|x| mol_hash.contains_key(x))
-            .filter(|x| (x.energy - mol_hash.get(x).unwrap() <= tol))
-            .for_each(
-                    |x| writer_file.write_all(x.lines.as_bytes()).unwrap()
-                );
+        // Instantiate Mol2Reader for a given file
+        let mol2_reader = Mol2Reader::new(&filename)?;
+
+        // Grep File with Query Table
+        match table {
+
+            QueryFormat::WithoutScore(ref t) => {
+                grep_with_set(mol2_reader, &t, &mut writer_file)
+            },
+
+            QueryFormat::WithScore(ref t) => {
+                grep_with_map(mol2_reader, &t, tol, &mut writer_file)
+            }
+        }
+
     }
 
     Ok(())
