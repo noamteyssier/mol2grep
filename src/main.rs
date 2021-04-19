@@ -478,6 +478,9 @@ fn main() -> Result<(), Error> {
     let matches = get_args();
 
     // Assign Variables
+    let input_mol2s = matches.values_of("mol2");
+    let input_filelist = matches.value_of("input_files");
+
     let query_filename = matches.value_of("query").unwrap();
     let output_filename = matches.value_of("output").unwrap();
     let tol = matches.value_of("tolerance")
@@ -509,9 +512,7 @@ fn main() -> Result<(), Error> {
     // Instantiate Writer
     let mut writer_file = writer(output_filename);
 
-    let input_mol2s = matches.values_of("mol2");
-    let input_filelist = matches.value_of("input_files");
-
+    // Instantiate Input File List
     let input_files: Vec<String>;
     match input_mol2s {
 
@@ -529,6 +530,7 @@ fn main() -> Result<(), Error> {
 
     };
 
+    // Instantiate Send/Receive Channels
     let (channel_send, channel_recv): (Sender<Mol2>, Receiver<Mol2>) = mpsc::channel();
 
     // places molecules into writer channel
