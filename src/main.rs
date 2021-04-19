@@ -444,7 +444,7 @@ fn main() -> Result<(), Error> {
     for filename in input_files {
 
         // Instantiate Mol2Reader for a given file
-        let mol2_reader = Mol2Reader::new(filename)?;
+        let mol2_reader = Mol2Reader::new(&filename)?;
 
         // Grep File with Query Table
         match table {
