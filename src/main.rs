@@ -369,6 +369,21 @@ pub fn writer(filename: &str) -> Box<dyn Write> {
 }
 
 
+// Reads in an input list of paths
+fn read_input_list(filename: &str) -> Result<Vec<String>, io::Error>{
+
+    let mut file = File::open(filename)?;
+    let mut list = String::new();
+    file.read_to_string(&mut list)?;
+
+    let content: Vec<String> = list
+        .split_whitespace()
+        .map(|x| x.to_string())
+        .collect();
+
+    Ok(content)
+}
+
 // Receives arguments from CLI
 fn get_args() -> ArgMatches<'static> {
     let matches = App::new("mol2grep")
@@ -401,16 +416,26 @@ fn get_args() -> ArgMatches<'static> {
                 .takes_value(true)
                 .default_value("query_output.mol2.gz")
             )
-        .arg(
-            Arg::with_name("mol2")
-                .short("i")
-                .long("input")
-                .value_name("*.mol2.gz")
-                .help("mol2.gz formatted files to grep (can take multiple inputs)")
+            .arg(
+                Arg::with_name("mol2")
+                    .short("i")
+                    .long("input")
+                    .value_name("*.mol2.gz")
+                    .help("mol2.gz formatted files to grep (can take multiple inputs)")
+                    .takes_value(true)
+                    .required(true)
+                    .min_values(1)
+                    .required_unless_one(&["input_files"])
+            )
+            .arg(
+                Arg::with_name("input_files")
+                .short("f")
+                .long("files")
+                .value_name("<files>.txt")
+                .help("a list of filenames to process")
                 .takes_value(true)
-                .required(true)
-                .min_values(1)
-        )
+                .required(false)
+            )
         .get_matches();
 
     matches
@@ -425,7 +450,6 @@ fn main() -> Result<(), Error> {
     // Assign Variables
     let query_filename = matches.value_of("query").unwrap();
     let output_filename = matches.value_of("output").unwrap();
-    let input_files = matches.values_of("mol2").unwrap();
     let tol = matches
         .value_of("tolerance")
         .unwrap()
@@ -439,6 +463,26 @@ fn main() -> Result<(), Error> {
 
     // Instantiate Writer
     let mut writer_file = writer(output_filename);
+
+    let input_mol2s = matches.values_of("mol2");
+    let input_filelist = matches.value_of("input_files");
+
+    let input_files: Vec<String>;
+    match input_mol2s {
+
+        // case where one or multiple mol2 are given at CLI
+        Some(f) => {
+            input_files = f.into_iter()
+                .map(|x| x.to_string())
+                .collect()
+        },
+
+        // case where a single input file containing mol2 paths is given at CLI
+        None => {
+            input_files = read_input_list(input_filelist.unwrap()).unwrap()
+        }
+
+    };
 
     // Iterate through vector of input files
     for filename in input_files {
