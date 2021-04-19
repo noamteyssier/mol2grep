@@ -15,6 +15,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use clap::{Arg, App, ArgMatches};
 use rayon::prelude::*;
+use indicatif::ProgressIterator;
 
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
@@ -541,7 +542,9 @@ fn main() -> Result<(), Error> {
 
         // iterate through input files in parallel
         input_files
-            .par_iter()
+            .into_iter()
+            .progress()  // adds a progress bar on the file processing
+            .par_bridge()
             .for_each_with(channel_send, |sender, x| {
 
                 // instantiate a new mol2 reader
