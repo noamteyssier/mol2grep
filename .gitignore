@@ -1,2 +1,3 @@
 /target
 *.mol2.gz
+mol2grep
