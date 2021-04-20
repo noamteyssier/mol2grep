@@ -15,7 +15,6 @@ use crate::file_io::writer;
 use indicatif::ProgressIterator;
 use rayon::prelude::*;
 
-
 // Function to perform grep without checking for score matches
 fn grep_with_set(
         mol2_reader: Mol2Reader,
@@ -81,20 +80,7 @@ pub fn grep(
         input_files: Vec<String>,
         query_filename: &str,
         output_filename: &str,
-        tol: f64,
-        num_threads: usize) -> Result<(), Error> {
-
-    // Instantiate number of threads for rayon parallel processing
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .build_global()
-        .expect(
-            &format!(
-                "Error: error building thread pool with <{}> threads",
-                num_threads
-            )
-        );
-
+        tol: f64) -> Result<u32, Error> {
 
     // Instantiate QueryReader and read file into table
     let mut qr = QueryReader::new(query_filename)?;
@@ -167,26 +153,18 @@ pub fn grep(
         num_passing_fmt.lock().unwrap()
     );
 
-    Ok(())
+    let result = *num_passing_fmt
+        .lock()
+        .unwrap();
+
+    Ok(result)
 }
 
 // implements split subcommand
 pub fn split(
         input_files: Vec<String>,
         prefix: &str,
-        num_files: usize,
-        num_threads: usize) -> Result<(), Error> {
-
-        // Instantiate number of threads for rayon parallel processing
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build_global()
-            .expect(
-                &format!(
-                    "Error: error building thread pool with <{}> threads",
-                    num_threads
-                )
-            );
+        num_files: usize) -> Result<Vec<u32>, Error> {
 
         // Instantiate Send/Receive Channels
         let (channel_send, channel_recv): (Sender<Mol2>, Receiver<Mol2>) = mpsc::channel();
@@ -244,7 +222,7 @@ pub fn split(
                 println!("  {}.{:04}.mol2.gz:\t{}", prefix, i, count_vec[i])
             });
 
-        Ok(())
+        Ok(count_vec)
 }
 
 pub fn table(

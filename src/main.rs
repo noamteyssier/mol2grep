@@ -2,12 +2,26 @@
 use clap::{Arg, App, ArgMatches, SubCommand, AppSettings};
 use std::io::Error;
 
+#[macro_use]
+extern crate serial_test;
+
+mod test;
 mod mol2;
 mod query;
 mod mol2utils;
 mod file_io;
 use file_io::read_input_list;
 
+// builds the global threadpool for rayon parallel processing
+fn build_threadpool(num_threads: usize) {
+
+    // Instantiate number of threads for rayon parallel processing
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .expect("Error : Failed to build thread pool");
+
+}
 
 // runs grep subcommand
 fn subcommand_grep(matches: &ArgMatches) -> Result<(), Error> {
@@ -46,13 +60,16 @@ fn subcommand_grep(matches: &ArgMatches) -> Result<(), Error> {
 
     };
 
+    build_threadpool(num_threads);
+
     mol2utils::grep(
         input_files,
         query_filename,
         output_filename,
-        tol,
-        num_threads
-    )
+        tol
+    ).expect("Error: Failed to grep");
+
+    Ok(())
 }
 
 
@@ -92,12 +109,15 @@ fn subcommand_split(matches: &ArgMatches) -> Result<(), Error> {
 
     };
 
+    build_threadpool(num_threads);
+
     mol2utils::split(
         input_files,
         prefix,
-        num_files,
-        num_threads
-    )
+        num_files
+    ).expect("Error: Failed to split");
+
+    Ok(())
 }
 
 
@@ -297,7 +317,7 @@ fn build_cli() -> App<'static, 'static> {
 }
 
 
-fn main() -> Result<(), Error> {
+fn main() {
 
     // Match Arguments
     let app = build_cli();
@@ -306,14 +326,18 @@ fn main() -> Result<(), Error> {
     match matches.subcommand() {
         ("grep", grep_matches) => {
             subcommand_grep(grep_matches.unwrap())
+                .expect("Error: Failed to grep")
         },
         ("split", split_matches) => {
             subcommand_split(split_matches.unwrap())
+                .expect("Error: Failed to split")
         }
         ("table", table_matches) => {
             subcommand_table(table_matches.unwrap())
+                .expect("Error: Failed to build table")
         }
         _ => unreachable!()
-    }
+    };
+
 
 }
