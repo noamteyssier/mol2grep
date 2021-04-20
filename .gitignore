@@ -1,3 +1,4 @@
 /target
 *.mol2.gz
 mol2grep
+*.tab.gz
