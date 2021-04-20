@@ -13,7 +13,7 @@ use std::fmt;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
-use clap::{Arg, App, ArgMatches};
+use clap::{Arg, App, ArgMatches, SubCommand, AppSettings};
 use rayon::prelude::*;
 use indicatif::ProgressIterator;
 
@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
-
 
 // Struct representing molecular data from a mol2 formatted file
 #[derive (Clone)]
@@ -424,77 +423,8 @@ fn read_input_list(filename: &str) -> Result<Vec<String>, io::Error>{
 }
 
 
-// Receives arguments from CLI
-fn get_args() -> ArgMatches<'static> {
-    let matches = App::new("mol2grep")
-        .version("0.1")
-        .author("Noam Teyssier")
-        .about("Searches mol2 files and returns poses that match zincid and expected score")
-        .arg(
-            Arg::with_name("query")
-                .short("q")
-                .long("query")
-                .value_name("ZINC-id,score.tsv")
-                .help("Query table of ZINC-ids and scores to search for (tab separated, no header)")
-                .takes_value(true)
-                .required(true)
-            )
-        .arg(
-            Arg::with_name("tolerance")
-                .short("e")
-                .long("tol")
-                .help("Minimum tolerance to accept in float comparisons (default = 1e-6)")
-                .takes_value(true)
-                .required(false)
-                .default_value("1e-6")
-            )
-        .arg(
-            Arg::with_name("output")
-                .short("o")
-                .long("out")
-                .help("mol2 formatted filename to write passing molecules to")
-                .takes_value(true)
-                .default_value("query_output.mol2.gz")
-            )
-            .arg(
-                Arg::with_name("mol2")
-                    .short("i")
-                    .long("input")
-                    .value_name("*.mol2.gz")
-                    .help("mol2.gz formatted files to grep (can take multiple inputs)")
-                    .takes_value(true)
-                    .required(true)
-                    .min_values(1)
-                    .required_unless_one(&["input_files"])
-            )
-            .arg(
-                Arg::with_name("input_files")
-                .short("f")
-                .long("files")
-                .value_name("<files>.txt")
-                .help("a list of filenames to process")
-                .takes_value(true)
-                .required(false)
-            )
-            .arg(
-                Arg::with_name("num_threads")
-                    .short("t")
-                    .long("threads")
-                    .help("Number of threads to use in parallel processing")
-                    .takes_value(true)
-                    .required(false)
-                    .default_value("4")
-                )
-        .get_matches();
-
-    matches
-}
-
-
-fn main() -> Result<(), Error> {
-
-    // Match Arguments
-    let matches = get_args();
+// runs grep subcommand
+fn subcommand_grep(matches: &ArgMatches) -> Result<(), Error> {
 
     // Assign Variables
     let input_mol2s = matches.values_of("mol2");
@@ -613,4 +543,250 @@ fn main() -> Result<(), Error> {
     );
 
     Ok(())
+}
+
+// runs split subcommand
+fn subcommand_split(matches: &ArgMatches) -> Result<(), Error> {
+
+    // assign variables
+    let input_mol2s = matches.values_of("mol2");
+    let input_filelist = matches.value_of("input_files");
+    let prefix = matches.value_of("prefix").unwrap();
+
+    let num_files = matches.value_of("num_files")
+        .unwrap()
+        .parse::<usize>()
+        .expect("Malformed input: num_threads");
+
+    let num_threads = matches.value_of("num_threads")
+        .unwrap()
+        .parse::<usize>()
+        .expect("Malformed input: num_threads");
+
+    // Instantiate number of threads for rayon parallel processing
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .expect(
+            &format!(
+                "Error: error building thread pool with <{}> threads",
+                num_threads
+            )
+        );
+
+
+    // Instantiate Input File List
+    let input_files: Vec<String>;
+    match input_mol2s {
+
+        // case where one or multiple mol2 are given at CLI
+        Some(f) => {
+            input_files = f.into_iter()
+                .map(|x| x.to_string())
+                .collect()
+        },
+
+        // case where a single input file containing mol2 paths is given at CLI
+        None => {
+            input_files = read_input_list(input_filelist.unwrap()).unwrap()
+        }
+
+    };
+
+
+    // Instantiate Send/Receive Channels
+    let (channel_send, channel_recv): (Sender<Mol2>, Receiver<Mol2>) = mpsc::channel();
+
+    // places molecules into writer channel
+    thread::spawn(move || {
+
+        // iterate through input files in parallel
+        input_files
+            .into_iter()
+            .progress()
+            .par_bridge()
+            .for_each_with(channel_send, |sender, x| {
+
+                // instantiate a new mol2 reader
+                let mol2_reader = Mol2Reader::new(&x).unwrap();
+
+                mol2_reader
+                    .into_iter()
+                    .for_each(|x|{
+                        sender.send(x).expect("Error in sending through channel");
+                    })
+
+            });
+    });
+
+    let mut writer_vec: Vec<Box<dyn Write>> = (0..num_files)
+        .into_iter()
+        .map(|i| {
+            writer(&format!("{}.{:04}.mol2.gz", prefix, i))
+        })
+        .collect();
+
+    let mut count_vec = vec![0; num_files];
+
+
+    let mut num_molecules = 0;
+
+    for mol in channel_recv {
+
+        let file_id = num_molecules % num_files;
+
+        writer_vec[file_id]
+            .write_all(mol.lines.as_bytes())
+            .expect("Error in writing to output file");
+        count_vec[file_id] += 1;
+
+        num_molecules += 1;
+    };
+
+    println!("\nFile Totals:");
+    (0..num_files)
+        .into_iter()
+        .for_each(|i| {
+            println!("  {}.{:04}.mol2.gz:\t{}", prefix, i, count_vec[i])
+        });
+
+    Ok(())
+}
+
+// Receives arguments from CLI
+fn build_cli() -> App<'static, 'static> {
+    let app = App::new("mol2grep")
+        .version("0.1")
+        .author("Noam Teyssier")
+        .subcommand(SubCommand::with_name("grep")
+            .about("greps mol2 files and returns poses that match zincid and/or expected score")
+            .arg(
+                Arg::with_name("query")
+                    .short("q")
+                    .long("query")
+                    .value_name("ZINC-id,score.tsv")
+                    .help("Query table of ZINC-ids and scores to search for (tab separated, no header)")
+                    .takes_value(true)
+                    .required(true)
+                )
+            .arg(
+                Arg::with_name("tolerance")
+                    .short("e")
+                    .long("tol")
+                    .help("Minimum tolerance to accept in float comparisons (default = 1e-6)")
+                    .takes_value(true)
+                    .required(false)
+                    .default_value("1e-6")
+                )
+            .arg(
+                Arg::with_name("output")
+                    .short("o")
+                    .long("out")
+                    .help("mol2 formatted filename to write passing molecules to")
+                    .takes_value(true)
+                    .default_value("query_output.mol2.gz")
+                )
+            .arg(
+                Arg::with_name("mol2")
+                    .short("i")
+                    .long("input")
+                    .value_name("*.mol2.gz")
+                    .help("mol2.gz formatted files to grep (can take multiple inputs)")
+                    .takes_value(true)
+                    .required(true)
+                    .min_values(1)
+                    .required_unless_one(&["input_files"])
+            )
+            .arg(
+                Arg::with_name("input_files")
+                .short("f")
+                .long("files")
+                .value_name("<files>.txt")
+                .help("a list of filenames to process")
+                .takes_value(true)
+                .required(false)
+            )
+            .arg(
+                Arg::with_name("num_threads")
+                    .short("t")
+                    .long("threads")
+                    .help("Number of threads to use in parallel processing")
+                    .takes_value(true)
+                    .required(false)
+                    .default_value("4")
+                )
+            .setting(AppSettings::ArgRequiredElseHelp)
+        )
+        .subcommand(SubCommand::with_name("split")
+            .about("Splits a list of mol2 files into a given number of output files")
+            .arg(
+                Arg::with_name("mol2")
+                    .short("i")
+                    .long("input")
+                    .value_name("*.mol2.gz")
+                    .help("mol2.gz formatted files to grep (can take multiple inputs)")
+                    .takes_value(true)
+                    .required(true)
+                    .min_values(1)
+                    .required_unless_one(&["input_files"])
+            )
+            .arg(
+                Arg::with_name("input_files")
+                .short("f")
+                .long("files")
+                .value_name("<files>.txt")
+                .help("a list of filenames to process")
+                .takes_value(true)
+                .required(false)
+            )
+            .arg(
+                Arg::with_name("prefix")
+                    .short("o")
+                    .long("prefix")
+                    .help("prefix of output files: <prefix>.file_id.mol2.gz")
+                    .takes_value(true)
+                    .default_value("split")
+                )
+            .arg(
+                Arg::with_name("num_files")
+                    .short("n")
+                    .long("num_files")
+                    .help("Number of files to split items into")
+                    .takes_value(true)
+                    .required(false)
+                    .default_value("4")
+                )
+            .arg(
+                Arg::with_name("num_threads")
+                    .short("t")
+                    .long("threads")
+                    .help("Number of threads to use in parallel processing")
+                    .takes_value(true)
+                    .required(false)
+                    .default_value("4")
+                )
+        )
+        .setting(AppSettings::SubcommandRequiredElseHelp);
+
+
+    return app
+}
+
+
+fn main() -> Result<(), Error> {
+
+    // Match Arguments
+    let app = build_cli();
+    let matches = app.get_matches();
+
+    match matches.subcommand() {
+        ("grep", grep_matches) => {
+            subcommand_grep(grep_matches.unwrap())
+        },
+        ("split", split_matches) => {
+            subcommand_split(split_matches.unwrap())
+        }
+        _ => unreachable!()
+    }
+
 }
