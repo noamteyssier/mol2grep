@@ -653,6 +653,88 @@ fn subcommand_split(matches: &ArgMatches) -> Result<(), Error> {
     Ok(())
 }
 
+// runs table subcommand
+fn subcommand_table(matches: &ArgMatches) -> Result<(), Error> {
+
+    // assign variables
+    let input_mol2s = matches.values_of("mol2");
+    let input_filelist = matches.value_of("input_files");
+    let output_filename = matches.value_of("output").unwrap();
+
+
+    // Instantiate Input File List
+    let input_files: Vec<String>;
+    match input_mol2s {
+
+        // case where one or multiple mol2 are given at CLI
+        Some(f) => {
+            input_files = f.into_iter()
+                .map(|x| x.to_string())
+                .collect()
+        },
+
+        // case where a single input file containing mol2 paths is given at CLI
+        None => {
+            input_files = read_input_list(input_filelist.unwrap()).unwrap()
+        }
+
+    };
+
+
+    // Instantiate Send/Receive Channels
+    let (channel_send, channel_recv): (Sender<Mol2>, Receiver<Mol2>) = mpsc::channel();
+
+    // places molecules into writer channel
+    thread::spawn(move || {
+
+        // iterate through input files in parallel
+        input_files
+            .iter()
+            .for_each(|x| {
+
+                // instantiate a new mol2 reader
+                let mol2_reader = Mol2Reader::new(&x).unwrap();
+
+                mol2_reader
+                    .into_iter()
+                    .for_each(|x|{
+                        channel_send.send(x).expect("Error in sending through channel");
+                    })
+
+            });
+    });
+
+    // Instantiate Writer
+    let mut writer = writer(output_filename);
+
+    // Writer a header if no_header flag isn't present
+    if !matches.is_present("no_header") {
+        writer
+            .write_all(
+                &format!("ligand_id\tname\tenergy\n").into_bytes()
+            )
+            .expect("Error in writing to output file");
+    }
+
+    let mut ligand_id = 0;
+    for mol in channel_recv {
+
+        writer
+            .write_all(
+                &format!("{}\t{}\t{}\n", ligand_id, mol.name, mol.energy).into_bytes()
+            )
+            .expect("Error in writing to output file");
+
+        ligand_id += 1;
+    };
+
+    println!("\n Total Poses: {}", ligand_id);
+    println!(" Written to: {}", output_filename);
+
+    Ok(())
+
+}
+
 // Receives arguments from CLI
 fn build_cli() -> App<'static, 'static> {
     let app = App::new("mol2grep")
@@ -766,6 +848,44 @@ fn build_cli() -> App<'static, 'static> {
                     .default_value("4")
                 )
         )
+        .subcommand(SubCommand::with_name("table")
+            .about("convert a list of mol2 files into tab-separated table of names + scores")
+            .arg(
+                Arg::with_name("mol2")
+                    .short("i")
+                    .long("input")
+                    .value_name("*.mol2.gz")
+                    .help("mol2.gz formatted files to grep (can take multiple inputs)")
+                    .takes_value(true)
+                    .required(true)
+                    .min_values(1)
+                    .required_unless_one(&["input_files"])
+            )
+            .arg(
+                Arg::with_name("input_files")
+                .short("f")
+                .long("files")
+                .value_name("<files>.txt")
+                .help("a list of filenames to process")
+                .takes_value(true)
+                .required(false)
+            )
+            .arg(
+                Arg::with_name("output")
+                    .short("o")
+                    .long("output")
+                    .help("output filename to write table to")
+                    .takes_value(true)
+                    .default_value("output.tab.gz")
+                )
+            .arg(
+                Arg::with_name("no_header")
+                    .short("n")
+                    .long("no_header")
+                    .help("do not include a header in output file")
+                    .takes_value(false)
+                )
+        )
         .setting(AppSettings::SubcommandRequiredElseHelp);
 
 
@@ -785,6 +905,9 @@ fn main() -> Result<(), Error> {
         },
         ("split", split_matches) => {
             subcommand_split(split_matches.unwrap())
+        }
+        ("table", table_matches) => {
+            subcommand_table(table_matches.unwrap())
         }
         _ => unreachable!()
     }
