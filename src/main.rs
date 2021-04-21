@@ -2,8 +2,6 @@
 use clap::{Arg, App, ArgMatches, SubCommand, AppSettings};
 use std::io::Error;
 
-extern crate serial_test;
-
 mod test;
 mod mol2;
 mod query;

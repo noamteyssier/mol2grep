@@ -8,7 +8,6 @@ mod tests {
     use crate::mol2utils;
 
     #[test]
-    #[serial]
     fn read_mol2() {
         /*
         Tests whether a single mol2 can be read correctly
@@ -28,7 +27,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn read_multi_mol2() {
         /*
         Tests whether a multiple mol2s can be read correctly
@@ -60,7 +58,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn read_list() {
         /*
         Tests whether a list of input files can be read correctly
@@ -86,7 +83,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn run_grep_without_energy() {
         /*
         Tests whether a query can be read and processed without energy
@@ -111,7 +107,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn run_grep_with_energy() {
 
         let input_list = "data/input_list.txt";
@@ -132,7 +127,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn run_split() {
 
         let input_list = "data/input_list.txt";
@@ -152,7 +146,7 @@ mod tests {
             697, 697, 697, 697, 697
             ];
 
-        
+
         assert!(expected.len() == count_vec.len());
 
         count_vec
