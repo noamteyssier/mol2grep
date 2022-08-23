@@ -9,8 +9,8 @@ edition = "2018"
 [dependencies]
 clap = "2.33.3"
 flate2 = "1.0.19"
-regex = "1.4.5"
-rayon = "1.5.0"
+regex = "1.6"
+rayon = "1.5.3"
 indicatif = {version = "*", features = ["rayon"]}
 rand = "0.8.3"
 serial_test = "0.5.1"
